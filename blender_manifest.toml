@@ -1,0 +1,22 @@
+[manifest]
+schema_version = "1.0.0"
+
+id = "github_copilot_blender"
+name = "GitHub Copilot for Blender"
+version = "1.0.0"
+tagline = "AI-powered assistant with full agentic tool-calling for Blender"
+maintainer = "GitHub Copilot Integration"
+type = "add-on"
+
+# Blender version compatibility
+blender_version_min = "4.2.0"
+
+# License
+license = ["SPDX:MIT"]
+
+# Categories
+tags = ["Development", "3D View"]
+
+# Wheels / dependencies — requests is bundled via wheels or we use urllib
+# [wheels]
+# No external wheels needed; we use urllib.request from stdlib

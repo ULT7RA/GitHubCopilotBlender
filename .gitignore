@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.cache
+copilot_token_cache.json
+.DS_Store
+Thumbs.db
