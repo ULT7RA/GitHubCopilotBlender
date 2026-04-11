@@ -5,6 +5,7 @@ Handles: auth, chat, model refresh, uploads, actions, and the async modal timer.
 
 import json
 import os
+import sys
 import time
 import webbrowser
 import base64
@@ -34,6 +35,136 @@ def _add_chat(cp, role, content, model_id=""):
     msg.content = content
     msg.model_id = model_id
     msg.timestamp = time.time()
+    # Auto-save chat history to disk after every message
+    _auth.save_chat_history(cp.chat_history)
+
+    # Print to the Blender console so you can actually read it
+    _print_to_console(role, content, model_id)
+
+    # Auto-refresh the pop-out chat text display
+    try:
+        from . import panels as _panels
+        _panels._refresh_chat_text(bpy.context)
+    except Exception:
+        pass
+
+
+def _print_to_console(role, content, model_id=""):
+    """Print chat messages to the dedicated console via IPC."""
+    # Also write to the IPC response file for the console to display
+    if role == "assistant":
+        _write_ipc_response({
+            "content": content,
+            "model": model_id,
+            "error": None,
+            "tool_log": [],
+        })
+    elif role == "system" and "Error:" in content:
+        _write_ipc_response({
+            "content": "",
+            "model": "",
+            "error": content,
+            "tool_log": [],
+        })
+
+
+import subprocess
+import tempfile
+
+# IPC paths for console communication
+_IPC_DIR = os.path.join(os.environ.get("TEMP", "/tmp"), "copilot_blender_ipc")
+_PROMPT_FILE = os.path.join(_IPC_DIR, "prompt.json")
+_RESPONSE_FILE = os.path.join(_IPC_DIR, "response.json")
+_STATUS_FILE = os.path.join(_IPC_DIR, "status.json")
+_chat_log_path = os.path.join(tempfile.gettempdir(), "copilot_blender_chat.log")
+_console_proc = None
+
+
+def _write_ipc_status(context):
+    """Write current status so the console knows we're connected."""
+    cp = _get_cp(context)
+    os.makedirs(_IPC_DIR, exist_ok=True)
+    data = {
+        "connected": True,
+        "username": cp.username,
+        "active_model": cp.active_model_id,
+        "model_count": len(cp.available_models),
+        "timestamp": time.time(),
+    }
+    try:
+        with open(_STATUS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except OSError:
+        pass
+
+
+def _write_ipc_response(result):
+    """Write a chat response for the console to pick up."""
+    os.makedirs(_IPC_DIR, exist_ok=True)
+    try:
+        with open(_RESPONSE_FILE, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _check_ipc_prompt(context):
+    """Check if the console has written a prompt for us. Returns prompt dict or None."""
+    try:
+        if os.path.exists(_PROMPT_FILE):
+            with open(_PROMPT_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            os.remove(_PROMPT_FILE)
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return None
+
+
+def _spawn_chat_console():
+    """Spawn the dedicated chat console window."""
+    global _console_proc
+    if _console_proc is not None and _console_proc.poll() is None:
+        return  # Already running
+
+    # Clean up old IPC files
+    os.makedirs(_IPC_DIR, exist_ok=True)
+    for f in (_PROMPT_FILE, _RESPONSE_FILE):
+        try:
+            if os.path.exists(f):
+                os.remove(f)
+        except OSError:
+            pass
+
+    console_script = os.path.join(os.path.dirname(__file__), "chat_console.py")
+    try:
+        _console_proc = subprocess.Popen(
+            [sys.executable, console_script],
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        )
+        print(f"[CopilotChat] Console spawned (PID {_console_proc.pid})")
+    except Exception as e:
+        print(f"[CopilotChat] Failed to spawn console: {e}")
+
+
+def _restore_chat_history(cp):
+    """Load saved chat history from disk into scene properties."""
+    saved = _auth.load_chat_history()
+    if not saved:
+        return
+    # Don't duplicate — only load if chat_history is empty or has just the
+    # system "Restored session" message
+    if len(cp.chat_history) > 1:
+        return
+    # Clear the "Restored session" system message we just added
+    cp.chat_history.clear()
+    for item in saved:
+        msg = cp.chat_history.add()
+        msg.role = item.get("role", "user")
+        msg.content = item.get("content", "")
+        msg.model_id = item.get("model_id", "")
+        msg.timestamp = item.get("timestamp", 0.0)
+    print(f"[CopilotChat] Restored {len(saved)} messages from previous session")
 
 
 def _ensure_token(context) -> bool:
@@ -70,6 +201,20 @@ class COPILOT_OT_AsyncTimer(Operator):
         # Drain Blender main-thread queue (tool execution)
         _executor.drain_main_queue()
 
+        # Check for prompts from the external chat console
+        ipc_prompt = _check_ipc_prompt(context)
+        if ipc_prompt and self._active_request_id == 0:
+            action = ipc_prompt.get("action", "chat")
+            prompt = ipc_prompt.get("prompt", "")
+            if action == "chat" and prompt:
+                cp = _get_cp(context)
+                cp.prompt_text = prompt
+                bpy.ops.copilot.send_chat()
+            elif action == "clear":
+                bpy.ops.copilot.clear_chat()
+            elif action == "refresh_models":
+                bpy.ops.copilot.refresh_models()
+
         # Check for completed async chat
         if self._active_request_id > 0:
             status = _api.get_chat_result(self._active_request_id)
@@ -97,13 +242,8 @@ class COPILOT_OT_AsyncTimer(Operator):
                     if area.type == 'VIEW_3D':
                         area.tag_redraw()
 
-        # Keep running if there are pending requests or we're still active
-        if self._active_request_id > 0 or COPILOT_OT_AsyncTimer._is_running:
-            return {'PASS_THROUGH'}
-
-        # Nothing pending, shut down timer
-        self.cancel(context)
-        return {'FINISHED'}
+        # Keep running — always poll for console input and pending requests
+        return {'PASS_THROUGH'}
 
     def execute(self, context):
         if COPILOT_OT_AsyncTimer._is_running:
@@ -152,9 +292,15 @@ class COPILOT_OT_SignIn(Operator):
             prefs.cached_oauth_token = cp.oauth_token
             prefs.cached_username = cp.username
             _add_chat(cp, "system", f"Restored session for {cp.username}")
+            # Restore previous chat history from disk
+            _restore_chat_history(cp)
             self.report({'INFO'}, f"Signed in as {cp.username}")
             # Auto-fetch models
             bpy.ops.copilot.refresh_models()
+            # Spawn console and start timer
+            _spawn_chat_console()
+            _ensure_timer(context)
+            _write_ipc_status(context)
             return {'FINISHED'}
 
         # Start device flow
@@ -189,9 +335,11 @@ class COPILOT_OT_SignIn(Operator):
                 cp.device_code_display = ""
                 prefs.cached_oauth_token = oauth_token
                 prefs.cached_username = username
-                _add_chat(cp, "system", f"✓ Signed in as {username} ({cp.sku})")
+                _add_chat(cp, "system", f"Signed in as {username} ({cp.sku})")
                 # Auto-fetch models
                 bpy.ops.copilot.refresh_models()
+                _spawn_chat_console()
+                _write_ipc_status(bpy.context)
             with _executor._main_queue_lock:
                 _executor._main_queue.append((0, _update, (), {}))
 
@@ -252,7 +400,13 @@ class COPILOT_OT_RefreshModels(Operator):
             return {'CANCELLED'}
 
         def _fetch():
-            models = _api.fetch_models(cp.api_base, cp.copilot_token)
+            print(f"[CopilotModels] Fetching models from {cp.api_base}...")
+            try:
+                models = _api.fetch_models(cp.api_base, cp.copilot_token)
+                print(f"[CopilotModels] Got {len(models)} models")
+            except Exception as e:
+                print(f"[CopilotModels] FETCH FAILED: {e}")
+                models = []
             def _update():
                 cp.available_models.clear()
                 for m in models:
@@ -292,6 +446,7 @@ class COPILOT_OT_RefreshModels(Operator):
                     cp.active_model_id = cp.available_models[0].model_id
 
                 _add_chat(cp, "system", f"Loaded {len(cp.available_models)} models. Active: {cp.active_model_id}")
+                _write_ipc_status(bpy.context)
 
             with _executor._main_queue_lock:
                 _executor._main_queue.append((0, _update, (), {}))
@@ -440,6 +595,7 @@ class COPILOT_OT_ClearChat(Operator):
         cp = _get_cp(context)
         cp.chat_history.clear()
         cp.tool_log = ""
+        _auth.clear_chat_history()
         _add_chat(cp, "system", "Chat cleared.")
         return {'FINISHED'}
 

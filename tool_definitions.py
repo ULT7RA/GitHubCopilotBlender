@@ -318,7 +318,7 @@ def get_blender_tool_definitions() -> list:
             "type": "function",
             "function": {
                 "name": "render_preview",
-                "description": "Render the current viewport or camera view and save to a file.",
+                "description": "Render the current scene and get a visual image back for analysis. After rendering, you will see the result image and can evaluate the scene visually to suggest improvements to lighting, materials, composition, etc.",
                 "parameters": {
                     "type": "object",
                     "properties": {

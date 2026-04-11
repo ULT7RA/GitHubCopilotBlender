@@ -7,6 +7,7 @@ import json
 import os
 import time
 import uuid
+import base64
 import threading
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -15,22 +16,52 @@ from . import auth as _auth
 from . import tool_definitions as _tools
 from . import tool_executor as _executor
 
+
+def _inject_render_image(messages: list, image_path: str):
+    """Read a rendered image from disk, base64 encode it, and append as a
+    user vision message so the model can see and analyze the render."""
+    try:
+        if not os.path.isfile(image_path):
+            print(f"[CopilotAPI] Render image not found: {image_path}")
+            return
+        with open(image_path, "rb") as f:
+            img_data = f.read()
+        if len(img_data) > 20_000_000:  # 20MB safety cap
+            print(f"[CopilotAPI] Render image too large ({len(img_data)} bytes), skipping vision injection")
+            return
+        b64 = base64.b64encode(img_data).decode("ascii")
+        ext = os.path.splitext(image_path)[1].lower().lstrip(".")
+        mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                "bmp": "image/bmp", "webp": "image/webp"}.get(ext, "image/png")
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Here is the render result. Analyze it and describe what you see."},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            ],
+        })
+        print(f"[CopilotAPI] Injected render image for vision analysis ({len(img_data)} bytes)")
+    except Exception as e:
+        print(f"[CopilotAPI] Failed to inject render image: {e}")
+
 # ── Shared request headers ────────────────────────────────────────────────
 
-def _build_headers(copilot_token: str) -> dict:
-    return {
+def _build_headers(copilot_token: str, *, include_api_version: bool = True) -> dict:
+    headers = {
         "Authorization": f"Bearer {copilot_token}",
         "Content-Type": "application/json",
         "Accept": "application/json",
         "Copilot-Integration-Id": "vscode-chat",
-        "Editor-Version": "blender/5.0.0",
-        "Editor-Plugin-Version": "copilot-blender/1.0.0",
-        "User-Agent": "GitHubCopilotChat/0.26.7",
+        "Editor-Version": "vscode/1.103.2",
+        "Editor-Plugin-Version": "copilot-chat/0.27.1",
+        "User-Agent": "GitHubCopilotChat/0.27.1",
         "OpenAI-Intent": "conversation-panel",
-        "X-GitHub-Api-Version": "2025-04-01",
         "X-Initiator": "user",
         "X-Request-Id": str(uuid.uuid4()),
     }
+    if include_api_version:
+        headers["X-GitHub-Api-Version"] = "2025-05-01"
+    return headers
 
 
 # ── Model catalog ────────────────────────────────────────────────────────
@@ -86,14 +117,13 @@ def fetch_models(api_base: str, copilot_token: str) -> list:
 # ── System prompt ─────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = (
-    "You are GitHub Copilot, an AI assistant integrated into Blender (3D creation suite). "
-    "You have tools to read/write/edit/delete files, list directories, search files, "
-    "create meshes, create materials, add modifiers, execute Python scripts in Blender, "
-    "render previews, manage collections, get scene info, import/export assets, and "
-    "get project structure. Use tools when the user's request requires interacting with "
-    "the filesystem or the Blender scene. Always confirm destructive operations. "
-    "When you create or modify scene objects, use the execute_python_script tool with "
-    "valid Blender Python (bpy) code. Be precise and efficient."
+    "You are inside Blender. This is a persistent multi-turn conversation. "
+    "You have tools available. Use them proactively instead of asking the user to check things. "
+    "STRICT FORMATTING RULES — NEVER BREAK THESE: "
+    "Never use markdown. No headers, no bold, no code fences, no bullet points. "
+    "Never use emojis. Not a single one. "
+    "Write in plain conversational English like a coworker talking to you. "
+    "Just talk normally. Explain things in sentences and paragraphs."
 )
 
 
@@ -118,7 +148,7 @@ def send_chat(
     on_tool_call(tool_name, tool_args, tool_result) — optional progress callback.
     """
     url = f"{api_base}/chat/completions"
-    headers = _build_headers(copilot_token)
+    headers = _build_headers(copilot_token, include_api_version=False)
 
     tool_defs = _tools.get_blender_tool_definitions() if enable_tools else []
     tool_log = []
@@ -129,9 +159,10 @@ def send_chat(
     # We just loop until stop or cap
 
     # ── Conversation trimming ──
-    # Prevent payload from exceeding safe limits by dropping old messages.
-    MAX_PAYLOAD_CHARS = 800_000
-    MIN_MSGS_KEEP = 6  # system + at least 2 user/assistant pairs + current
+    # Prevent payload from exceeding safe limits.
+    MAX_PAYLOAD_CHARS = 65_000  # ~65KB content (tools add ~20KB on top)
+    KEEP_RECENT = 10
+    MIN_MSGS_KEEP = 4
 
     def _estimate_size(msgs):
         total = 0
@@ -143,15 +174,38 @@ def send_chat(
                 for part in c:
                     if isinstance(part, dict):
                         total += len(part.get("text", ""))
-                        total += len(part.get("url", ""))
-            total += 100  # JSON overhead
+                        img = part.get("image_url", {})
+                        if isinstance(img, dict):
+                            total += len(img.get("url", ""))
+            # Count tool_calls arguments
+            for tc in m.get("tool_calls", []):
+                fn = tc.get("function", {})
+                total += len(fn.get("arguments", "")) + 50
+            total += 100
         return total
 
+    def _prune_old(msgs):
+        """Truncate old tool results, strip old images, drop if still too big."""
+        recent_start = max(1, len(msgs) - KEEP_RECENT)
+        for i in range(1, recent_start):
+            m = msgs[i]
+            # Strip base64 images from old messages
+            c = m.get("content")
+            if isinstance(c, list):
+                text_only = [p for p in c if isinstance(p, dict) and p.get("type") != "image_url"]
+                if len(text_only) != len(c):
+                    m["content"] = text_only[0].get("text", "[image removed]") if text_only else "[image removed]"
+            # Truncate old tool results
+            if m.get("role") == "tool" and isinstance(m.get("content"), str) and len(m["content"]) > 1500:
+                m["content"] = m["content"][:1500] + "\n...[truncated]"
+            if m.get("role") == "assistant" and isinstance(m.get("content"), str) and len(m["content"]) > 3000:
+                m["content"] = m["content"][:3000] + "\n...[truncated]"
+        # Drop oldest if still over limit
+        while _estimate_size(msgs) > MAX_PAYLOAD_CHARS and len(msgs) > MIN_MSGS_KEEP:
+            msgs.pop(1)
+
     while True:
-        # Trim old messages if payload is too large
-        while (_estimate_size(messages) > MAX_PAYLOAD_CHARS
-               and len(messages) > MIN_MSGS_KEEP):
-            messages.pop(1)  # Remove oldest non-system message
+        _prune_old(messages)
 
         body = {
             "model": model_id,
@@ -268,12 +322,19 @@ def send_chat(
                 on_tool_call(tool_name, tool_args, result)
 
             # Append tool result
+            tool_result_str = str(result)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc_id,
                 "name": tool_name,
-                "content": str(result),
+                "content": tool_result_str,
             })
+
+            # If a tool produced a render image, inject it as a vision message
+            # so the model can see and analyze what it rendered
+            if tool_result_str.startswith("__RENDER_IMAGE__:"):
+                image_path = tool_result_str.split("\n")[0].replace("__RENDER_IMAGE__:", "").strip()
+                _inject_render_image(messages, image_path)
 
         iteration += 1
 

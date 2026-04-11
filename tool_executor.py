@@ -530,7 +530,9 @@ def _tool_render_preview(args: dict) -> str:
 
         bpy.ops.render.render(write_still=True)
         abs_path = bpy.path.abspath(output)
-        return f"Rendered to: {abs_path} ({res_x}×{res_y}, {scene.render.engine})"
+        # __RENDER_IMAGE__ marker tells the API client to send this image
+        # back to the model for visual analysis
+        return f"__RENDER_IMAGE__:{abs_path}\nRendered to: {abs_path} ({res_x}x{res_y}, {scene.render.engine}, {samples} samples)"
 
     return _schedule_on_main(_render)
 

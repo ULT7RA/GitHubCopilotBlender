@@ -24,10 +24,10 @@ DEFAULT_API_BASE = "https://api.githubcopilot.com"
 
 # Editor identity headers (required by Copilot API)
 EDITOR_HEADERS = {
-    "User-Agent": "GitHubCopilotChat/0.26.7",
-    "Editor-Version": "blender/5.0.0",
-    "Editor-Plugin-Version": "copilot-blender/1.0.0",
-    "X-GitHub-Api-Version": "2025-04-01",
+    "User-Agent": "GitHubCopilotChat/0.27.1",
+    "Editor-Version": "vscode/1.103.2",
+    "Editor-Plugin-Version": "copilot-chat/0.27.1",
+    "X-GitHub-Api-Version": "2025-05-01",
 }
 
 _TOKEN_CACHE_FILENAME = "copilot_token_cache.json"
@@ -74,6 +74,61 @@ def clear_token_cache():
     with _lock:
         try:
             p = _cache_path()
+            if os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass
+
+
+# ── Chat history persistence ─────────────────────────────────────────────────
+
+_HISTORY_CACHE_FILENAME = "copilot_chat_history.json"
+_history_lock = threading.Lock()
+
+
+def _history_path():
+    return os.path.join(_get_cache_dir(), _HISTORY_CACHE_FILENAME)
+
+
+def save_chat_history(chat_history):
+    """Serialize a Blender CollectionProperty of CopilotChatMessage to disk."""
+    import time as _time
+    messages = []
+    for msg in chat_history:
+        messages.append({
+            "role": msg.role,
+            "content": msg.content,
+            "model_id": msg.model_id,
+            "timestamp": msg.timestamp,
+        })
+    data = {"version": 1, "saved_at": _time.time(), "messages": messages}
+    with _history_lock:
+        try:
+            with open(_history_path(), "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except OSError as e:
+            print(f"[CopilotAuth] Failed to save chat history: {e}")
+
+
+def load_chat_history() -> list:
+    """Load chat history from disk. Returns list of dicts."""
+    with _history_lock:
+        try:
+            p = _history_path()
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return data.get("messages", [])
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"[CopilotAuth] Failed to load chat history: {e}")
+    return []
+
+
+def clear_chat_history():
+    """Delete saved chat history."""
+    with _history_lock:
+        try:
+            p = _history_path()
             if os.path.exists(p):
                 os.remove(p)
         except OSError:
