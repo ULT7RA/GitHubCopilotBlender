@@ -60,7 +60,7 @@ def _build_headers(copilot_token: str, *, include_api_version: bool = True) -> d
         "X-Request-Id": str(uuid.uuid4()),
     }
     if include_api_version:
-        headers["X-GitHub-Api-Version"] = "2025-05-01"
+        headers["X-GitHub-Api-Version"] = "2025-04-01"
     return headers
 
 

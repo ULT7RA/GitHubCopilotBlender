@@ -27,7 +27,7 @@ EDITOR_HEADERS = {
     "User-Agent": "GitHubCopilotChat/0.27.1",
     "Editor-Version": "vscode/1.103.2",
     "Editor-Plugin-Version": "copilot-chat/0.27.1",
-    "X-GitHub-Api-Version": "2025-05-01",
+    "X-GitHub-Api-Version": "2025-04-01",
 }
 
 _TOKEN_CACHE_FILENAME = "copilot_token_cache.json"
