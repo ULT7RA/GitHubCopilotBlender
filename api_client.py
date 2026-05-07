@@ -53,8 +53,8 @@ def _build_headers(copilot_token: str) -> dict:
         "Content-Type": "application/json",
         "Accept": "application/json",
         "Copilot-Integration-Id": "vscode-chat",
-        "Editor-Version": "blender/5.0.0",
-        "Editor-Plugin-Version": "copilot-blender/1.0.0",
+        "Editor-Version": "vscode/1.96.0",
+        "Editor-Plugin-Version": "copilot-chat/0.24.2",
         "User-Agent": "GitHubCopilotChat/0.43.2026040602",
         "OpenAI-Intent": "conversation-panel",
         "X-GitHub-Api-Version": "2025-04-01",
@@ -355,6 +355,12 @@ def send_chat_async(
         _pending_results[rid] = {"status": "pending", "result": None}
 
     def _run():
+        _dbg = os.path.join(os.environ.get("TEMP", "/tmp"), "copilot_blender_ipc", "debug_thread.log")
+        def _log(msg):
+            with open(_dbg, "a") as _f:
+                _f.write(f"{time.time():.1f} [{rid}] {msg}\n")
+                _f.flush()
+        _log(f"Thread started. model={model_id} msgs={len(messages)} tools={enable_tools}")
         try:
             result = send_chat(
                 api_base, copilot_token, model_id, messages,
@@ -363,7 +369,9 @@ def send_chat_async(
                 on_tool_call=on_tool_call, verbose=verbose,
                 max_iterations=max_iterations,
             )
+            _log(f"send_chat returned: error={result.get('error')} content_len={len(result.get('content',''))}")
         except Exception as e:
+            _log(f"EXCEPTION: {e}\n{traceback.format_exc()}")
             result = {
                 "content": "",
                 "model": model_id,
@@ -373,6 +381,7 @@ def send_chat_async(
             }
         with _result_lock:
             _pending_results[rid] = {"status": "done", "result": result}
+        _log(f"Result stored. status=done")
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()

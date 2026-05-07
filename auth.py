@@ -24,9 +24,9 @@ DEFAULT_API_BASE = "https://api.githubcopilot.com"
 
 # Editor identity headers (required by Copilot API)
 EDITOR_HEADERS = {
-    "User-Agent": "GitHubCopilotChat/0.27.1",
-    "Editor-Version": "vscode/1.103.2",
-    "Editor-Plugin-Version": "copilot-chat/0.27.1",
+    "User-Agent": "GitHubCopilotChat/0.43.2026040602",
+    "Editor-Version": "vscode/1.96.0",
+    "Editor-Plugin-Version": "copilot-chat/0.24.2",
     "X-GitHub-Api-Version": "2025-04-01",
 }
 
