@@ -6,6 +6,7 @@ All HTTP is done via stdlib urllib (no external dependencies).
 import json
 import os
 import time
+import traceback
 import uuid
 import base64
 import threading
@@ -46,22 +47,20 @@ def _inject_render_image(messages: list, image_path: str):
 
 # ── Shared request headers ────────────────────────────────────────────────
 
-def _build_headers(copilot_token: str, *, include_api_version: bool = True) -> dict:
-    headers = {
+def _build_headers(copilot_token: str) -> dict:
+    return {
         "Authorization": f"Bearer {copilot_token}",
         "Content-Type": "application/json",
         "Accept": "application/json",
         "Copilot-Integration-Id": "vscode-chat",
-        "Editor-Version": "vscode/1.103.2",
-        "Editor-Plugin-Version": "copilot-chat/0.27.1",
-        "User-Agent": "GitHubCopilotChat/0.27.1",
+        "Editor-Version": "blender/5.0.0",
+        "Editor-Plugin-Version": "copilot-blender/1.0.0",
+        "User-Agent": "GitHubCopilotChat/0.43.2026040602",
         "OpenAI-Intent": "conversation-panel",
+        "X-GitHub-Api-Version": "2025-04-01",
         "X-Initiator": "user",
         "X-Request-Id": str(uuid.uuid4()),
     }
-    if include_api_version:
-        headers["X-GitHub-Api-Version"] = "2025-04-01"
-    return headers
 
 
 # ── Model catalog ────────────────────────────────────────────────────────
@@ -139,6 +138,7 @@ def send_chat(
     max_output_tokens: int = 16384,
     on_tool_call=None,
     verbose: bool = False,
+    max_iterations: int = 25,
 ) -> dict:
     """
     Blocking chat completion with automatic tool-call loop.
@@ -148,21 +148,17 @@ def send_chat(
     on_tool_call(tool_name, tool_args, tool_result) — optional progress callback.
     """
     url = f"{api_base}/chat/completions"
-    headers = _build_headers(copilot_token, include_api_version=False)
+    headers = _build_headers(copilot_token)
 
     tool_defs = _tools.get_blender_tool_definitions() if enable_tools else []
     tool_log = []
     iteration = 0
-    max_iter = 0  # Will be read from prefs in operator; 0 = unlimited here
-
-    # The caller can set max_iter via messages meta
-    # We just loop until stop or cap
+    max_iter = max_iterations if max_iterations > 0 else 25
 
     # ── Conversation trimming ──
-    # Prevent payload from exceeding safe limits.
-    MAX_PAYLOAD_CHARS = 65_000  # ~65KB content (tools add ~20KB on top)
-    KEEP_RECENT = 10
-    MIN_MSGS_KEEP = 4
+    # Prevent payload from exceeding safe limits by dropping old messages.
+    MAX_PAYLOAD_CHARS = 800_000
+    MIN_MSGS_KEEP = 6  # system + at least 2 user/assistant pairs + current
 
     def _estimate_size(msgs):
         total = 0
@@ -174,38 +170,15 @@ def send_chat(
                 for part in c:
                     if isinstance(part, dict):
                         total += len(part.get("text", ""))
-                        img = part.get("image_url", {})
-                        if isinstance(img, dict):
-                            total += len(img.get("url", ""))
-            # Count tool_calls arguments
-            for tc in m.get("tool_calls", []):
-                fn = tc.get("function", {})
-                total += len(fn.get("arguments", "")) + 50
-            total += 100
+                        total += len(part.get("url", ""))
+            total += 100  # JSON overhead
         return total
 
-    def _prune_old(msgs):
-        """Truncate old tool results, strip old images, drop if still too big."""
-        recent_start = max(1, len(msgs) - KEEP_RECENT)
-        for i in range(1, recent_start):
-            m = msgs[i]
-            # Strip base64 images from old messages
-            c = m.get("content")
-            if isinstance(c, list):
-                text_only = [p for p in c if isinstance(p, dict) and p.get("type") != "image_url"]
-                if len(text_only) != len(c):
-                    m["content"] = text_only[0].get("text", "[image removed]") if text_only else "[image removed]"
-            # Truncate old tool results
-            if m.get("role") == "tool" and isinstance(m.get("content"), str) and len(m["content"]) > 1500:
-                m["content"] = m["content"][:1500] + "\n...[truncated]"
-            if m.get("role") == "assistant" and isinstance(m.get("content"), str) and len(m["content"]) > 3000:
-                m["content"] = m["content"][:3000] + "\n...[truncated]"
-        # Drop oldest if still over limit
-        while _estimate_size(msgs) > MAX_PAYLOAD_CHARS and len(msgs) > MIN_MSGS_KEEP:
-            msgs.pop(1)
-
     while True:
-        _prune_old(messages)
+        # Trim old messages if payload is too large
+        while (_estimate_size(messages) > MAX_PAYLOAD_CHARS
+               and len(messages) > MIN_MSGS_KEEP):
+            messages.pop(1)  # Remove oldest non-system message
 
         body = {
             "model": model_id,
@@ -382,12 +355,22 @@ def send_chat_async(
         _pending_results[rid] = {"status": "pending", "result": None}
 
     def _run():
-        result = send_chat(
-            api_base, copilot_token, model_id, messages,
-            enable_tools=enable_tools, timeout=timeout,
-            max_output_tokens=max_output_tokens,
-            on_tool_call=on_tool_call, verbose=verbose,
-        )
+        try:
+            result = send_chat(
+                api_base, copilot_token, model_id, messages,
+                enable_tools=enable_tools, timeout=timeout,
+                max_output_tokens=max_output_tokens,
+                on_tool_call=on_tool_call, verbose=verbose,
+                max_iterations=max_iterations,
+            )
+        except Exception as e:
+            result = {
+                "content": "",
+                "model": model_id,
+                "usage": {},
+                "error": f"Unhandled exception in chat thread: {e}",
+                "tool_log": [traceback.format_exc()],
+            }
         with _result_lock:
             _pending_results[rid] = {"status": "done", "result": result}
 

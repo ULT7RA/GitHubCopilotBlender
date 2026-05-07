@@ -35,6 +35,7 @@ def _add_chat(cp, role, content, model_id=""):
     msg.content = content
     msg.model_id = model_id
     msg.timestamp = time.time()
+    print(f"[CopilotIPC] _add_chat role={role} len={len(content)} model={model_id}")
     # Auto-save chat history to disk after every message
     _auth.save_chat_history(cp.chat_history)
 
@@ -76,6 +77,8 @@ _IPC_DIR = os.path.join(os.environ.get("TEMP", "/tmp"), "copilot_blender_ipc")
 _PROMPT_FILE = os.path.join(_IPC_DIR, "prompt.json")
 _RESPONSE_FILE = os.path.join(_IPC_DIR, "response.json")
 _STATUS_FILE = os.path.join(_IPC_DIR, "status.json")
+print(f"[CopilotIPC] IPC_DIR = {_IPC_DIR}")
+print(f"[CopilotIPC] RESPONSE_FILE = {_RESPONSE_FILE}")
 _chat_log_path = os.path.join(tempfile.gettempdir(), "copilot_blender_chat.log")
 _console_proc = None
 
@@ -100,12 +103,18 @@ def _write_ipc_status(context):
 
 def _write_ipc_response(result):
     """Write a chat response for the console to pick up."""
-    os.makedirs(_IPC_DIR, exist_ok=True)
     try:
+        os.makedirs(_IPC_DIR, exist_ok=True)
+        payload = json.dumps(result, ensure_ascii=False)
         with open(_RESPONSE_FILE, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False)
-    except OSError:
-        pass
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        print(f"[CopilotIPC] OK wrote response.json ({len(payload)} bytes)")
+    except Exception as e:
+        print(f"[CopilotIPC] FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def _check_ipc_prompt(context):
@@ -193,6 +202,7 @@ class COPILOT_OT_AsyncTimer(Operator):
     _timer = None
     _active_request_id: int = 0
     _is_running: bool = False
+    _request_start_time: float = 0.0
 
     def modal(self, context, event):
         if event.type != 'TIMER':
@@ -200,6 +210,9 @@ class COPILOT_OT_AsyncTimer(Operator):
 
         # Drain Blender main-thread queue (tool execution)
         _executor.drain_main_queue()
+
+        # Proactively refresh token to prevent expiry during tool loops
+        _ensure_token(context)
 
         # Check for prompts from the external chat console
         ipc_prompt = _check_ipc_prompt(context)
@@ -236,11 +249,21 @@ class COPILOT_OT_AsyncTimer(Operator):
 
                 _api.clear_chat_result(self._active_request_id)
                 self._active_request_id = 0
+                self._request_start_time = 0.0
 
                 # Redraw UI
                 for area in context.screen.areas:
                     if area.type == 'VIEW_3D':
                         area.tag_redraw()
+            elif (self._request_start_time > 0 and
+                  time.time() - self._request_start_time > 300):
+                # Safety timeout: if request is stuck for 5 minutes, cancel it
+                cp = _get_cp(context)
+                cp.is_thinking = False
+                _add_chat(cp, "system", "Error: Request timed out (5 min)")
+                _api.clear_chat_result(self._active_request_id)
+                self._active_request_id = 0
+                self._request_start_time = 0.0
 
         # Keep running — always poll for console input and pending requests
         return {'PASS_THROUGH'}
@@ -539,6 +562,7 @@ class COPILOT_OT_SendChat(Operator):
             max_iterations=prefs.max_tool_iterations,
         )
         COPILOT_OT_AsyncTimer._active_request_id = rid
+        COPILOT_OT_AsyncTimer._request_start_time = time.time()
 
         # Clear uploads after send
         cp.pending_uploads.clear()
