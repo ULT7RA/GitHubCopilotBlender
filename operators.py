@@ -216,7 +216,7 @@ class COPILOT_OT_AsyncTimer(Operator):
 
         # Check for prompts from the external chat console
         ipc_prompt = _check_ipc_prompt(context)
-        if ipc_prompt and self._active_request_id == 0:
+        if ipc_prompt and COPILOT_OT_AsyncTimer._active_request_id == 0:
             action = ipc_prompt.get("action", "chat")
             prompt = ipc_prompt.get("prompt", "")
             if action == "chat" and prompt:
@@ -229,8 +229,12 @@ class COPILOT_OT_AsyncTimer(Operator):
                 bpy.ops.copilot.refresh_models()
 
         # Check for completed async chat
-        if self._active_request_id > 0:
-            status = _api.get_chat_result(self._active_request_id)
+        if COPILOT_OT_AsyncTimer._active_request_id > 0:
+            status = _api.get_chat_result(COPILOT_OT_AsyncTimer._active_request_id)
+            _dbg_path = os.path.join(_IPC_DIR, "debug_timer.log")
+            with open(_dbg_path, "a") as _df:
+                _df.write(f"{time.time():.1f} rid={COPILOT_OT_AsyncTimer._active_request_id} status={status['status']}\n")
+                _df.flush()
             if status["status"] == "done":
                 result = status["result"]
                 cp = _get_cp(context)
@@ -247,23 +251,23 @@ class COPILOT_OT_AsyncTimer(Operator):
                     if result.get("tool_log"):
                         cp.tool_log = "\n".join(result["tool_log"])
 
-                _api.clear_chat_result(self._active_request_id)
-                self._active_request_id = 0
-                self._request_start_time = 0.0
+                _api.clear_chat_result(COPILOT_OT_AsyncTimer._active_request_id)
+                COPILOT_OT_AsyncTimer._active_request_id = 0
+                COPILOT_OT_AsyncTimer._request_start_time = 0.0
 
                 # Redraw UI
                 for area in context.screen.areas:
                     if area.type == 'VIEW_3D':
                         area.tag_redraw()
-            elif (self._request_start_time > 0 and
-                  time.time() - self._request_start_time > 300):
+            elif (COPILOT_OT_AsyncTimer._request_start_time > 0 and
+                  time.time() - COPILOT_OT_AsyncTimer._request_start_time > 300):
                 # Safety timeout: if request is stuck for 5 minutes, cancel it
                 cp = _get_cp(context)
                 cp.is_thinking = False
                 _add_chat(cp, "system", "Error: Request timed out (5 min)")
-                _api.clear_chat_result(self._active_request_id)
-                self._active_request_id = 0
-                self._request_start_time = 0.0
+                _api.clear_chat_result(COPILOT_OT_AsyncTimer._active_request_id)
+                COPILOT_OT_AsyncTimer._active_request_id = 0
+                COPILOT_OT_AsyncTimer._request_start_time = 0.0
 
         # Keep running — always poll for console input and pending requests
         return {'PASS_THROUGH'}
