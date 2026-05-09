@@ -155,23 +155,6 @@ def send_chat(
     iteration = 0
     max_iter = max_iterations if max_iterations > 0 else 25
 
-    # ── Strip old render images to prevent payload bloat ──
-    # Keep only the most recent render image in the conversation
-    last_render_idx = -1
-    for i in range(len(messages) - 1, -1, -1):
-        c = messages[i].get("content")
-        if isinstance(c, list) and any(
-            isinstance(p, dict) and "image_url" in p for p in c
-        ):
-            if last_render_idx == -1:
-                last_render_idx = i  # keep this one
-            else:
-                # Replace old render with a text-only placeholder
-                messages[i] = {
-                    "role": messages[i]["role"],
-                    "content": "[Previous render image removed to save space]",
-                }
-
     # ── Conversation trimming ──
     MAX_PAYLOAD_CHARS = 800_000
     MIN_MSGS_KEEP = 6
@@ -186,11 +169,38 @@ def send_chat(
                 for part in c:
                     if isinstance(part, dict):
                         total += len(part.get("text", ""))
-                        total += len(part.get("url", ""))
+                        # Count full image_url data URIs
+                        iu = part.get("image_url")
+                        if isinstance(iu, dict):
+                            total += len(iu.get("url", ""))
+                        else:
+                            total += len(part.get("url", ""))
+            # Count tool_calls JSON
+            tcs = m.get("tool_calls")
+            if tcs:
+                total += len(json.dumps(tcs))
             total += 100  # JSON overhead
         return total
 
+    def _strip_old_images(msgs):
+        """Keep only the most recent render image, replace older ones with text."""
+        last_img = -1
+        for i in range(len(msgs) - 1, -1, -1):
+            c = msgs[i].get("content")
+            if isinstance(c, list) and any(
+                isinstance(p, dict) and "image_url" in p for p in c
+            ):
+                if last_img == -1:
+                    last_img = i
+                else:
+                    msgs[i] = {"role": msgs[i]["role"],
+                               "content": "[Previous render removed]"}
+
+
     while True:
+        # Strip old render images every iteration (not just at start)
+        _strip_old_images(messages)
+
         # Trim old messages if payload is too large
         while (_estimate_size(messages) > MAX_PAYLOAD_CHARS
                and len(messages) > MIN_MSGS_KEEP):
@@ -208,6 +218,13 @@ def send_chat(
             body["tool_choice"] = "auto"
 
         payload = json.dumps(body).encode("utf-8")
+        # Log payload size for debugging
+        _dbg = os.path.join(os.environ.get("TEMP", "/tmp"), "copilot_blender_ipc", "debug_thread.log")
+        try:
+            with open(_dbg, "a") as _df:
+                _df.write(f"{time.time():.1f} payload={len(payload)} msgs={len(messages)} iter={iteration}\n")
+                _df.flush()
+        except: pass
         req = Request(url, data=payload, headers=headers, method="POST")
 
         if verbose:
