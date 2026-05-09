@@ -340,6 +340,21 @@ def get_blender_tool_definitions() -> list:
         {
             "type": "function",
             "function": {
+                "name": "screenshot_viewport",
+                "description": "Capture a screenshot of the 3D viewport as it currently appears (including wireframes, overlays, selections). Returns the image for visual analysis. Faster than a full render — use this to quickly check your work.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "output_path": {"type": "string", "description": "Output image file path (default: auto temp path)"},
+                    },
+                    "required": [],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "manage_collection",
                 "description": "Create, rename, or link objects to a collection.",
                 "parameters": {

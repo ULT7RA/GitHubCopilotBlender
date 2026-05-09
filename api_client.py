@@ -155,10 +155,26 @@ def send_chat(
     iteration = 0
     max_iter = max_iterations if max_iterations > 0 else 25
 
+    # ── Strip old render images to prevent payload bloat ──
+    # Keep only the most recent render image in the conversation
+    last_render_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        c = messages[i].get("content")
+        if isinstance(c, list) and any(
+            isinstance(p, dict) and "image_url" in p for p in c
+        ):
+            if last_render_idx == -1:
+                last_render_idx = i  # keep this one
+            else:
+                # Replace old render with a text-only placeholder
+                messages[i] = {
+                    "role": messages[i]["role"],
+                    "content": "[Previous render image removed to save space]",
+                }
+
     # ── Conversation trimming ──
-    # Prevent payload from exceeding safe limits by dropping old messages.
     MAX_PAYLOAD_CHARS = 800_000
-    MIN_MSGS_KEEP = 6  # system + at least 2 user/assistant pairs + current
+    MIN_MSGS_KEEP = 6
 
     def _estimate_size(msgs):
         total = 0

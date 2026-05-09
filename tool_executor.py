@@ -52,7 +52,11 @@ def _schedule_on_main(func, *args, **kwargs):
         _main_queue.append((eid, func, args, kwargs))
 
     # Block until result is ready (the modal timer will execute it)
-    deadline = time.time() + 30
+    _dbg = os.path.join(os.environ.get("TEMP", "/tmp"), "copilot_blender_ipc", "debug_drain.log")
+    with open(_dbg, "a") as _df:
+        _df.write(f"{time.time():.1f} scheduled eid={eid} func={func.__name__}\n")
+        _df.flush()
+    deadline = time.time() + 120
     while time.time() < deadline:
         with _main_results_lock:
             if eid in _main_results:
@@ -61,20 +65,39 @@ def _schedule_on_main(func, *args, **kwargs):
                     return f"Error: {result}"
                 return result
         time.sleep(0.05)
+    with open(_dbg, "a") as _df:
+        _df.write(f"{time.time():.1f} TIMEOUT eid={eid} (30s)\n")
+        _df.flush()
     return "Error: Main-thread execution timed out (30s)"
 
 
 def drain_main_queue():
     """Called from the modal timer on Blender's main thread."""
+    _dbg = os.path.join(os.environ.get("TEMP", "/tmp"), "copilot_blender_ipc", "debug_drain.log")
     with _main_queue_lock:
         pending = list(_main_queue)
         _main_queue.clear()
 
+    if pending:
+        with open(_dbg, "a") as _df:
+            _df.write(f"{time.time():.1f} draining {len(pending)} items\n")
+            _df.flush()
+
     for eid, func, args, kwargs in pending:
         try:
+            with open(_dbg, "a") as _df:
+                _df.write(f"{time.time():.1f} exec eid={eid} func={func.__name__}\n")
+                _df.flush()
             result = func(*args, **kwargs)
+            with open(_dbg, "a") as _df:
+                _df.write(f"{time.time():.1f} done eid={eid} result_len={len(str(result))}\n")
+                _df.flush()
         except Exception as e:
             result = e
+            with open(_dbg, "a") as _df:
+                import traceback as _tb
+                _df.write(f"{time.time():.1f} ERROR eid={eid}: {e}\n{_tb.format_exc()}\n")
+                _df.flush()
         with _main_results_lock:
             _main_results[eid] = result
 
@@ -507,11 +530,16 @@ def _tool_add_modifier(args: dict) -> str:
 
 
 def _tool_render_preview(args: dict) -> str:
-    output = args.get("output_path", "//render_preview.png")
+    output = args.get("output_path", "")
     res_x = args.get("resolution_x", 960)
     res_y = args.get("resolution_y", 540)
     engine = args.get("engine", "")
     samples = args.get("samples", 64)
+
+    # Use temp dir if no explicit path or Blender-relative path
+    if not output or output.startswith("//"):
+        import tempfile
+        output = os.path.join(tempfile.gettempdir(), "copilot_render_preview.png")
 
     def _render():
         scene = bpy.context.scene
@@ -535,6 +563,36 @@ def _tool_render_preview(args: dict) -> str:
         return f"__RENDER_IMAGE__:{abs_path}\nRendered to: {abs_path} ({res_x}x{res_y}, {scene.render.engine}, {samples} samples)"
 
     return _schedule_on_main(_render)
+
+
+def _tool_screenshot_viewport(args: dict) -> str:
+    """Capture a screenshot of the 3D viewport."""
+    import tempfile
+    output = args.get("output_path", os.path.join(tempfile.gettempdir(), "copilot_viewport_screenshot.png"))
+
+    def _capture():
+        # Find 3D viewport area
+        area_3d = None
+        for area in bpy.context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area_3d = area
+                break
+        if not area_3d:
+            return "Error: No 3D viewport found"
+
+        # Use offscreen render of the viewport
+        for space in area_3d.spaces:
+            if space.type == 'VIEW_3D':
+                # Use Blender's built-in screenshot
+                override = bpy.context.copy()
+                override['area'] = area_3d
+                with bpy.context.temp_override(**override):
+                    bpy.ops.screen.screenshot_area(filepath=output)
+                return f"__RENDER_IMAGE__:{output}\nViewport screenshot saved to: {output}"
+
+        return "Error: Could not capture viewport"
+
+    return _schedule_on_main(_capture)
 
 
 def _tool_manage_collection(args: dict) -> str:
@@ -666,6 +724,7 @@ _TOOL_MAP = {
     "create_material": _tool_create_material,
     "add_modifier": _tool_add_modifier,
     "render_preview": _tool_render_preview,
+    "screenshot_viewport": _tool_screenshot_viewport,
     "manage_collection": _tool_manage_collection,
     "import_asset": _tool_import_asset,
     "export_asset": _tool_export_asset,
