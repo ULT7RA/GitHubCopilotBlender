@@ -158,16 +158,9 @@ def main():
             print(f"  {n} models. Active: {active}\n")
             continue
 
-        # Print what user typed
-        print(f"\n{SEP}")
-        print(f"  YOU:")
-        print(SEP)
-        for line in user_input.split("\n"):
-            print(f"  {line}")
-        print()
-
         # Send to Blender
         write_prompt(user_input, action="chat")
+        print(f"\n  Thinking...\n")
 
         # Wait for response
         resp = wait_for_response()
