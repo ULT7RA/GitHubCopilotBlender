@@ -415,4 +415,19 @@ def get_blender_tool_definitions() -> list:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "view_image",
+                "description": "View a local image file from the user's computer. Use this when the user shares a file path to an image (screenshot, reference, texture, etc.) and you need to see it. The image will be sent to you for visual analysis. Supports PNG, JPG, BMP, WebP, TIFF.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filepath": {"type": "string", "description": "Absolute path to the image file on the local filesystem"},
+                    },
+                    "required": ["filepath"],
+                    "additionalProperties": False,
+                },
+            },
+        },
     ]

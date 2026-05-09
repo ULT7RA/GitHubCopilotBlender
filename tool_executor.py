@@ -702,6 +702,20 @@ def _tool_export_asset(args: dict) -> str:
     return _schedule_on_main(_export)
 
 
+def _tool_view_image(args: dict) -> str:
+    """View a local image file — sends it to the model for visual analysis."""
+    filepath = _resolve_path(args.get("filepath", ""))
+    if not filepath or not os.path.isfile(filepath):
+        return f"Error: Image not found: {filepath}"
+    ext = os.path.splitext(filepath)[1].lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff", ".tif"):
+        return f"Error: Not a supported image format: {ext}"
+    size = os.path.getsize(filepath)
+    if size > 20_000_000:
+        return f"Error: Image too large ({size // 1024 // 1024}MB). Max 20MB."
+    return f"__RENDER_IMAGE__:{filepath}\nViewing image: {filepath} ({size // 1024}KB)"
+
+
 # ── Tool dispatch ─────────────────────────────────────────────────────────
 
 _TOOL_MAP = {
@@ -728,6 +742,7 @@ _TOOL_MAP = {
     "manage_collection": _tool_manage_collection,
     "import_asset": _tool_import_asset,
     "export_asset": _tool_export_asset,
+    "view_image": _tool_view_image,
 }
 
 
