@@ -83,6 +83,20 @@ _chat_log_path = os.path.join(tempfile.gettempdir(), "copilot_blender_chat.log")
 _console_proc = None
 
 
+def _load_render_preview(path):
+    """Load a render image into bpy.data.images for inline preview."""
+    try:
+        img_name = "CopilotRender"
+        if img_name in bpy.data.images:
+            bpy.data.images[img_name].filepath = path
+            bpy.data.images[img_name].reload()
+        else:
+            bpy.data.images.load(path, check_existing=False)
+            bpy.data.images[-1].name = img_name
+    except Exception as e:
+        print(f"[CopilotChat] Failed to load render preview: {e}")
+
+
 def _write_ipc_status(context):
     """Write current status so the console knows we're connected."""
     cp = _get_cp(context)
@@ -247,9 +261,18 @@ class COPILOT_OT_AsyncTimer(Operator):
                     content = result.get("content", "(no response)")
                     _add_chat(cp, "assistant", content, model_id=model_label)
 
-                    # Append tool log
+                    # Append tool log and extract last render path
                     if result.get("tool_log"):
                         cp.tool_log = "\n".join(result["tool_log"])
+                        for entry in reversed(result["tool_log"]):
+                            if "__RENDER_IMAGE__:" in entry:
+                                # Extract path from tool log entry
+                                idx = entry.find("__RENDER_IMAGE__:")
+                                path = entry[idx + 17:].split("\n")[0].split("→")[0].strip()
+                                if os.path.isfile(path):
+                                    cp.last_render_path = path
+                                    _load_render_preview(path)
+                                break
 
                 _api.clear_chat_result(COPILOT_OT_AsyncTimer._active_request_id)
                 COPILOT_OT_AsyncTimer._active_request_id = 0

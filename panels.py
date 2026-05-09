@@ -116,6 +116,15 @@ class COPILOT_OT_PopoutChat(Operator):
             row.alert = True
             row.label(text=cp.thinking_text, icon='SORTTIME')
 
+        # ── Render preview (if available) ──
+        if cp.last_render_path:
+            img = bpy.data.images.get("CopilotRender")
+            if img:
+                layout.separator(factor=0.3)
+                preview_box = layout.box()
+                preview_box.label(text="Last Render:", icon='IMAGE_DATA')
+                preview_box.template_preview(img)
+
         layout.separator(factor=0.5)
 
         # ── Chat input bar ──

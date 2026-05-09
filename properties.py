@@ -75,6 +75,7 @@ class CopilotSceneProperties(PropertyGroup):
     last_error: StringProperty(name="Last Error", default="")
     tool_log: StringProperty(name="Tool Log", default="")
     request_count: IntProperty(name="Request Count", default=0)
+    last_render_path: StringProperty(name="Last Render", default="", subtype='FILE_PATH')
 
     # Conversation context (JSON string for message history sent to API)
     conversation_json: StringProperty(name="Conversation JSON", default="[]")
