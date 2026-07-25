@@ -68,11 +68,8 @@ class COPILOT_OT_PopoutChat(Operator):
     )
 
     def execute(self, context):
-        prompt = self.chat_input.strip()
-        if prompt:
-            cp = context.scene.copilot
-            cp.prompt_text = prompt
-            self.chat_input = ""
+        cp = context.scene.copilot
+        if cp.prompt_text.strip():
             bpy.ops.copilot.send_chat()
         # Re-open the dialog so it stays visible after sending
         bpy.ops.copilot.popout_chat('INVOKE_DEFAULT')
@@ -96,6 +93,8 @@ class COPILOT_OT_PopoutChat(Operator):
         row.operator("copilot.refresh_models", text="", icon='FILE_REFRESH')
         row.operator("copilot.clear_chat", text="", icon='TRASH')
         row.operator("copilot.copy_response", text="", icon='COPYDOWN')
+        row = layout.row(align=True)
+        row.prop(cp, "reasoning_strength", text="Reasoning")
 
         layout.separator(factor=0.3)
 
@@ -132,7 +131,8 @@ class COPILOT_OT_PopoutChat(Operator):
         input_box.label(text="Chat:", icon='OUTLINER_DATA_GP_LAYER')
         row = input_box.row(align=True)
         row.scale_y = 2.2
-        row.prop(self, "chat_input", text="")
+        row.prop(cp, "prompt_text", text="")
+        row.operator("copilot.send_chat", text="Send", icon='PLAY')
 
         # ── Upload row ──
         row = layout.row(align=True)

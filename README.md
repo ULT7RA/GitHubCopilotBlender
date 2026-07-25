@@ -7,19 +7,25 @@ Full-featured AI assistant addon for Blender with agentic tool-calling, OAuth au
 - **GitHub OAuth Device Flow** — One-click sign-in with token persistence across sessions
 - **Multi-Model Support** — Dynamic model catalog from Copilot API with full model picker (GPT, Claude, Gemini, etc.)
 - **Dockable N-Panel** — Sidebar panel in the 3D Viewport with chat, model selector, actions, and tool log
-- **Agentic Tool-Calling** — Automatic tool-call loop: Copilot reads/writes files, creates meshes, materials, modifiers, runs Python scripts, and more
-- **20 Built-in Tools**:
-  - **File ops**: read, write, edit, delete, copy, move, search, list directory, get info, project structure
-  - **Blender ops**: execute Python script, get scene info, create mesh, create material, add modifier, render preview, manage collections, import/export assets
+- **Agentic Tool-Calling** — Automatic tool loop for scene inspection, editing, validation, rigging, animation, rendering, and export
+- **37 Built-in Tools**:
+  - **File and docs**: bounded file operations, project search, web search, and local Blender documentation lookup
+  - **Scene creation**: meshes, materials, modifiers, collections, cameras, lights, renders, screenshots, and imports
+  - **Production workflows**: topology validation/editing, armatures, weights, animation, shader nodes, object management, undo, and Unity/Unreal/glTF export presets
 - **File Uploads** — Attach images (base64 inline) and text files to messages
+- **Conversation Resume** — Saved transcript and API context resume across Blender restarts
+- **Console Slash Commands** — Use `/models`, `/model`, `/sessions`, `/resume`, and `/new` from the IPC chat console
 - **Shared Auth** — Single sign-in state shared across all addon features
 - **Thinking Indicator** — Visual feedback while Copilot is processing
-- **Auto-Retry** — Transport failure auto-retry with diagnostics
+- **Reliable Long Tasks** — 600-second API timeout, independent cancellation, bounded tool output, and no five-minute chain cutoff
+- **Auto-Retry** — Up to three transport attempts on every agent step, including requests after tool execution
+- **Dual Copilot Protocols** — Supports both `/chat/completions` and `/responses` models from the live catalog
+- **Atomic Persistence** — Token, session, transcript, IPC prompt, status, and response files use atomic replacement
 - **API-Truth Model Labels** — Model shown in chat is always what the API actually returned
 
 ## Requirements
 
-- **Blender 4.2+** (tested with Blender 5.0)
+- **Blender 4.2+** (tested with Blender 5.1.1)
 - **GitHub Copilot subscription** (Free, Pro, Pro+, Business, or Enterprise)
 - **Internet connection** for API calls
 - No external Python packages required (uses stdlib `urllib`)
@@ -53,6 +59,23 @@ Full-featured AI assistant addon for Blender with agentic tool-calling, OAuth au
 4. **Chat**: Type in the prompt field and click Send (▶) or press Enter
 5. **Use actions**: Expand Actions for quick operations (Analyze Scene, Create Object, Generate Script, etc.)
 
+### Chat Console Commands
+
+| Command | Description |
+|---------|-------------|
+| `/models` | Refresh and list available Copilot models |
+| `/model` | Show active model and model list |
+| `/model <id\|number> [reasoning]` | Select a model and optional supported reasoning strength |
+| `/reasoning [strength]` | Show or set `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
+| `/tools` | List tools available to tool-capable models |
+| `/docs` | Show the bundled Blender docs folder used for local documentation search |
+| `/docs <path>` | Override the bundled docs folder with another local folder/file |
+| `/sessions` | List saved conversations |
+| `/resume <id\|number>` | Resume a saved conversation |
+| `/new [title]` | Start a new saved conversation |
+| `/clear` | Clear the active conversation |
+| `/help` | Show command help |
+
 ## Settings
 
 Access via Edit → Preferences → Add-ons → GitHub Copilot for Blender:
@@ -60,7 +83,8 @@ Access via Edit → Preferences → Add-ons → GitHub Copilot for Blender:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Request Timeout | 600s | HTTP timeout per request. Increase for complex tool-chain prompts |
-| Max Tool Iterations | 0 (unlimited) | Safety cap for agentic loops |
+| Max Output Tokens | 16384 | Requested response limit, capped to the selected model's advertised limit |
+| Max Tool Iterations | 40 | Safety cap for agentic loops; 0 also uses the safe default of 40 |
 | Require Patch Preview | On | Show diff before file changes |
 | Allowed Write Roots | (empty = any) | Restrict file write locations |
 | Verbose Logging | Off | Print detailed logs to console |
@@ -82,19 +106,40 @@ Access via Edit → Preferences → Add-ons → GitHub Copilot for Blender:
 | `search_files` | Regex search in files |
 | `get_file_info` | File metadata |
 | `get_project_structure` | Project tree overview |
+| `web_search` | Bounded web search |
+| `search_blender_docs` | Search downloaded local Blender documentation |
 
 ### Blender Tools
 | Tool | Description |
 |------|-------------|
 | `execute_python_script` | Run Python code in Blender context (bpy, bmesh, mathutils) |
+| `get_blender_version` | Inspect Blender, Python, build, and platform versions |
+| `inspect_blender_api` | Bounded RNA/API symbol inspection |
 | `get_scene_info` | Scene objects, materials, collections, render settings |
 | `create_mesh` | Create primitive meshes (cube, sphere, cylinder, etc.) |
 | `create_material` | Create PBR materials with Principled BSDF |
 | `add_modifier` | Add modifiers (Subdivision, Mirror, Array, etc.) |
 | `render_preview` | Render and save image |
+| `screenshot_viewport` | Capture the active 3D viewport |
 | `manage_collection` | Create/rename/link collections |
 | `import_asset` | Import FBX, OBJ, glTF, STL, PLY, ABC, USD |
 | `export_asset` | Export to FBX, OBJ, glTF, STL, PLY, USD |
+| `view_image` | Load a local reference image for model vision analysis |
+
+### Focused Production Tools
+| Tool | Description |
+|------|-------------|
+| `inspect_object` | Bounded object, mesh, material, modifier, rig, weight, animation, and constraint inspection |
+| `validate_mesh` | Detect non-manifold, boundary, loose, degenerate, duplicate, and normal issues |
+| `edit_mesh` | Merge, recalculate normals, triangulate, bevel, solidify, subdivide, and clean geometry |
+| `manage_object` | Select, transform, rename, duplicate, delete, parent, organize, hide, and set origins |
+| `manage_modifier` | List, add, configure, apply, remove, and reorder modifiers |
+| `manage_armature` | Create/inspect rigs, edit bones, add constraints, bind meshes, and normalize weights |
+| `manage_animation` | Keyframes, actions, interpolation, drivers, and frame ranges |
+| `manage_material_nodes` | Inspect/edit shader nodes, sockets, links, assignments, and image textures |
+| `manage_render` | Inspect/configure rendering, cameras, lights, and still renders |
+| `export_game_asset` | Verified Unity FBX, Unreal FBX, and game glTF presets |
+| `manage_undo` | Push checkpoints and undo Blender operations |
 
 ## Architecture
 
@@ -117,8 +162,11 @@ GitHubCopilotBlender/
 - **No external dependencies** — Uses Python stdlib `urllib.request` instead of `requests`
 - **Thread-safe Blender ops** — Blender-touching tools execute on main thread via queue + modal timer
 - **Token persistence** — OAuth tokens cached to `~/.cache/github-copilot-blender/`
+- **Conversation persistence** — Chat transcript and resumable API context are cached beside auth
+- **Bundled docs lookup** — Download Blender HTML docs into `GitHubCopilotBlender/blender-docs/` so `search_blender_docs` can search them locally
 - **API-truth model labels** — Response model ID is always from the API, never guessed
-- **Auto-retry** — One-time retry on transport failures
+- **Transport resilience** — Three attempts per API step with cancellation-aware backoff
+- **Context integrity** — Tool calls/results are stored and pruned as atomic groups; oversized results are preserved as temporary artifacts
 
 ## Troubleshooting
 

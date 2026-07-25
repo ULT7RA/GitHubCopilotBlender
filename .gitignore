@@ -4,5 +4,6 @@ __pycache__/
 .env
 *.cache
 copilot_token_cache.json
+blender-docs/
 .DS_Store
 Thumbs.db

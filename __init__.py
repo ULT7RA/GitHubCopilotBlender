@@ -8,7 +8,7 @@ bl_info = {
     "name": "GitHub Copilot for Blender",
     "description": "AI-powered assistant with agentic tool-calling for Blender",
     "author": "GitHub Copilot Integration",
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "blender": (4, 2, 0),
     "category": "Development",
     "location": "View3D > Sidebar > Copilot",

@@ -37,9 +37,9 @@ class GitHubCopilotPreferences(AddonPreferences):
 
     # --- Execution ---
     max_tool_iterations: IntProperty(
-        name="Max Tool-Call Iterations (0 = Unlimited)",
-        description="Safety cap for agentic tool-calling loops. 0 means unlimited",
-        default=0,
+        name="Max Tool-Call Iterations",
+        description="Safety cap for agentic tool-calling loops. 0 uses the default of 40",
+        default=40,
         min=0,
         max=5000,
     )
@@ -88,6 +88,11 @@ class GitHubCopilotPreferences(AddonPreferences):
         default="",
         options={'HIDDEN'},
     )
+    cached_reasoning_strength: StringProperty(
+        name="Cached Reasoning Strength",
+        default="default",
+        options={'HIDDEN'},
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -117,6 +122,7 @@ class GitHubCopilotPreferences(AddonPreferences):
         if self.cached_oauth_token:
             box.label(text=f"Signed in as: {self.cached_username or '(unknown)'}")
             box.label(text=f"Active model: {self.cached_active_model or '(none)'}")
+            box.label(text=f"Reasoning: {self.cached_reasoning_strength or 'default'}")
         else:
             box.label(text="Not signed in")
 

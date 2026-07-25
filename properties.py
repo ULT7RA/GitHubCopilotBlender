@@ -11,6 +11,18 @@ from bpy.props import (
 from bpy.types import PropertyGroup
 
 
+REASONING_STRENGTH_ITEMS = [
+    ("default", "Model Default", "Do not override the model's reasoning setting"),
+    ("none", "None", "Disable reasoning when the model supports it"),
+    ("minimal", "Minimal", "Use minimal reasoning effort"),
+    ("low", "Low", "Use low reasoning effort"),
+    ("medium", "Medium", "Use medium reasoning effort"),
+    ("high", "High", "Use high reasoning effort"),
+    ("xhigh", "Extra High", "Use extra-high reasoning effort"),
+    ("max", "Maximum", "Use the model's maximum reasoning effort"),
+]
+
+
 class CopilotChatMessage(PropertyGroup):
     """Single chat message in the transcript."""
     role: StringProperty(name="Role", default="user")
@@ -31,6 +43,9 @@ class CopilotModelItem(PropertyGroup):
     output_tokens: IntProperty(name="Max Output", default=0)
     is_default: BoolProperty(name="Is Default", default=False)
     endpoint: StringProperty(name="Endpoint", default="/chat/completions")
+    supported_endpoints: StringProperty(name="Supported Endpoints", default="/chat/completions")
+    reasoning_efforts: StringProperty(name="Reasoning Efforts", default="")
+    supports_reasoning: BoolProperty(name="Supports Reasoning", default=False)
     multiplier: FloatProperty(name="Billing Multiplier", default=0.0)
 
 
@@ -60,6 +75,12 @@ class CopilotSceneProperties(PropertyGroup):
     available_models: CollectionProperty(type=CopilotModelItem, name="Models")
     active_model_index: IntProperty(name="Active Model", default=0)
     active_model_id: StringProperty(name="Active Model ID", default="")
+    reasoning_strength: EnumProperty(
+        name="Reasoning Strength",
+        description="Reasoning effort to request for reasoning-capable models",
+        items=REASONING_STRENGTH_ITEMS,
+        default="default",
+    )
 
     # Chat
     chat_history: CollectionProperty(type=CopilotChatMessage, name="Chat History")
